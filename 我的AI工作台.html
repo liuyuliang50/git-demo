@@ -1123,7 +1123,6 @@ function switchView(v){
   window.scrollTo({top:0,behavior:"smooth"});
 }
 document.getElementById("nav").addEventListener("click",e=>{ const b=e.target.closest(".nav-item"); if(b) switchView(b.dataset.view); });
-document.getElementById("toNotes").onclick=()=>switchView("notes");
 document.getElementById("toGoals").onclick=()=>switchView("goals");
 document.getElementById("toTools").onclick=()=>switchView("tools");
 
