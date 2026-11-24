@@ -201,6 +201,16 @@ html[data-theme="dark"] .note-tag{background:#1c3b39}
 .sync-status{font-size:11px;color:#0a8a5a;background:#e9f7f0;padding:3px 8px;border-radius:20px;margin-left:auto;display:flex;align-items:center;gap:4px}
 .sync-status svg{width:12px;height:12px}
 .sync-status.off{color:var(--muted);background:var(--surface-2)}
+.git-remotes{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.git-remotes:empty{display:none}
+.git-remote{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);font-size:12px;text-decoration:none;color:var(--text);transition:.15s}
+.git-remote:hover{border-color:var(--primary);background:var(--surface)}
+.git-remote .gm-ic{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;flex:none;font-size:11px;font-weight:700;color:#fff}
+.git-remote.gitee .gm-ic{background:#c71d23}
+.git-remote.github .gm-ic{background:#24292f}
+.git-remote .gm-name{font-weight:600;flex:none}
+.git-remote .gm-url{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.git-remote .gm-go{margin-left:auto;color:var(--primary);font-size:13px;flex:none}
 .stat-row{display:flex;gap:16px;margin-top:14px;padding-top:13px;border-top:1px solid var(--border);flex-wrap:wrap}
 .stat-row div{font-size:11px;color:var(--muted)}
 .stat-row b{display:block;font-size:16px;color:var(--text);margin-bottom:2px}
@@ -525,6 +535,7 @@ html[data-theme="dark"] .btn.danger{background:#3a2029}
             <div class="stat-row">
               <div><b id="statCommit">0 次</b>提交</div><div><b id="statBranch">0 个</b>分支</div><div><b class="up" id="statAdd">+0</b>文件</div><div><b class="down" id="statDir">0</b>目录</div>
             </div>
+            <div class="git-remotes" id="gitRemotes"></div>
             <button class="mini-add" data-open-folder="root"><svg><use href="#i-folder"/></svg>打开资料库文件树</button>
             <p class="sub" id="gitHint" style="margin-top:8px"></p>
           </div>
@@ -1237,7 +1248,8 @@ const FALLBACK_TREE=[
   {name:"05_AI学习",kind:"dir",children:[]},
   {name:"99_归档",kind:"dir",children:[]}
 ];
-let dirHandle=null, libTree=FALLBACK_TREE, gitInfo={branch:"",commits:0,files:0,dirs:0,hash:"",author:""};
+const KNOWN_REMOTES=[{name:"gitee",url:"https://gitee.com/liuyuliang50/git-demo.git"},{name:"github",url:"https://github.com/liuyuliang50/git-demo.git"}];
+let dirHandle=null, libTree=FALLBACK_TREE, gitInfo={branch:"",commits:0,files:0,dirs:0,hash:"",author:"",remotes:KNOWN_REMOTES.slice()};
 function idb(){ return new Promise((resolve,reject)=>{ const req=indexedDB.open("wb_lib",1); req.onupgradeneeded=()=>req.result.createObjectStore("kv"); req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error); }); }
 async function saveHandle(h){ try{ const db=await idb(); const tx=db.transaction("kv","readwrite"); tx.objectStore("kv").put(h,"root"); await new Promise(r=>tx.oncomplete=r); }catch(e){} }
 async function loadHandle(){ try{ const db=await idb(); const tx=db.transaction("kv","readonly"); const r=tx.objectStore("kv").get("root"); return await new Promise(res=>{r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null);}); }catch(e){return null;} }
@@ -1253,7 +1265,7 @@ async function readTree(handle,path="",depth=0){
 }
 function countTree(nodes){ let files=0,dirs=0; const walk=ns=>ns.forEach(n=>{if(n.kind==="dir"){dirs++;walk(n.children||[]);}else files++;}); walk(nodes); return {files,dirs}; }
 async function readGit(handle){
-  const info={branch:"",commits:0,hash:"",author:""};
+  const info={branch:"",commits:0,hash:"",author:"",remotes:[]};
   try{
     const gh=await handle.getDirectoryHandle(".git");
     try{ const head=await (await (await gh.getFileHandle("HEAD")).getFile()).text();
@@ -1262,9 +1274,24 @@ async function readGit(handle){
     if(info.branch){ try{ const ref=await (await (await gh.getFileHandle("refs/heads/"+info.branch)).getFile()).text(); info.hash=ref.trim().slice(0,7); }catch(e){} }
     try{ const log=await (await (await gh.getFileHandle("logs/HEAD")).getFile()).text();
       const lines=log.split("\n").filter(l=>l.trim()); info.commits=lines.filter(l=>/\bcommit\b/.test(l)).length||lines.length; }catch(e){}
-    try{ const cfg=await (await (await gh.getFileHandle("config")).getFile()).text(); const m=cfg.match(/\[user\][\s\S]*?name\s*=\s*(.+)/); if(m) info.author=m[1].trim(); }catch(e){}
+    try{ const cfg=await (await (await gh.getFileHandle("config")).getFile()).text();
+      const m=cfg.match(/\[user\][\s\S]*?name\s*=\s*(.+)/); if(m) info.author=m[1].trim();
+      const re=/\[remote\s+"([^"]+)"\][\s\S]*?url\s*=\s*(\S+)/g; let rm;
+      while((rm=re.exec(cfg))){ info.remotes.push({name:rm[1],url:rm[2].trim()}); }
+    }catch(e){}
   }catch(e){}
   return info;
+}
+function remoteWebUrl(u){
+  if(!u) return "";
+  if(u.startsWith("git@")){ const m=u.match(/git@([^:]+):(.+?)(?:\.git)?$/); return m?("https://"+m[1]+"/"+m[2]):""; }
+  return u.replace(/\.git$/, "");
+}
+function remoteLabel(name,url){
+  const n=name.toLowerCase();
+  if(n.includes("gitee")) return "码云 Gitee";
+  if(n.includes("github")) return "GitHub";
+  return name;
 }
 function renderLib(){
   const bound=!!dirHandle, c=countTree(libTree);
@@ -1297,6 +1324,16 @@ function renderLib(){
   ss.innerHTML='<svg><use href="#'+(ok?"i-check":"i-cloud")+'"/></svg>'+(ok?"已连接":"未绑定");
   ss.className="sync-status"+(ok?"":" off");
   document.getElementById("syncDesc").textContent=ok?(gitInfo.hash+" · "+LIB_ROOT+" · git 用户 "+(gitInfo.author||"—")):"绑定后读取真实分支、提交记录与文件目录";
+  const reBox=document.getElementById("gitRemotes");
+  const remotes=gitInfo.remotes||[];
+  reBox.innerHTML=remotes.map(r=>{
+    const cls=/gitee/i.test(r.name)?"gitee":(/github/i.test(r.name)?"github":"");
+    const web=remoteWebUrl(r.url);
+    return '<a class="git-remote '+cls+'"'+(web?(' href="'+esc(web)+'" target="_blank" rel="noopener"'):"")+'>'+
+      '<span class="gm-ic">'+(cls==="gitee"?"码":cls==="github"?"GH":"↗")+'</span>'+
+      '<span class="gm-name">'+esc(remoteLabel(r.name,r.url))+'</span>'+
+      '<span class="gm-url">'+esc(r.url)+'</span>'+(web?'<span class="gm-go">↗</span>':"")+'</a>';
+  }).join("");
   document.getElementById("statCommit").textContent=gitInfo.commits+" 次";
   document.getElementById("statBranch").textContent=(ok?1:0)+" 个";
   document.getElementById("statAdd").textContent="+"+c.files;
